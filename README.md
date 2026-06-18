@@ -17,15 +17,17 @@
 
 ## 当前能力
 
-当前版本是 Mini Coding Agent v1，只读模式。
+当前版本是 Mini Coding Agent v2，支持查看、搜索、读取和小范围修改文本文件。
 
 Agent 可以使用这些代码工具：
 
 - `list_files`：查看工作区文件结构
 - `search_code`：搜索代码关键词
 - `read_file`：读取指定源码文件
+- `apply_patch`：用 old/new 文本替换方式修改文件
+- `git_diff`：查看当前未提交的 Git diff
 
-当前版本不会修改文件，也不会执行测试命令。它适合用来理解代码仓库结构、定位关键文件、解释源码逻辑。
+当前版本还不会执行测试命令。它适合用来理解代码仓库结构、定位关键文件、修改小范围文本内容，并通过 Git diff 检查修改结果。
 
 ## 工作流程
 
@@ -39,6 +41,17 @@ Agent 的核心流程如下：
 -> tools.py 执行对应工具
 -> 工具结果作为 Observation 回到上下文
 -> 循环继续，直到 Action 为 Finish
+```
+
+如果任务需要修改代码，推荐流程是：
+
+```text
+list_files
+-> search_code
+-> read_file
+-> apply_patch
+-> git_diff
+-> Finish
 ```
 
 示例：
@@ -140,6 +153,10 @@ python main.py
 搜索 search_code 相关代码，并解释它是怎么工作的
 ```
 
+```text
+把 README 里某一句话改得更简洁，然后查看 diff
+```
+
 ## 分析其他项目
 
 默认情况下，Agent 会分析当前目录。也可以设置 `AGENT_WORKSPACE` 指向另一个代码项目：
@@ -161,10 +178,13 @@ python main.py
 
 ## 下一步计划
 
-后续会逐步加入：
+当前已经支持：
 
 - `apply_patch`：通过 patch 修改文件
 - `git_diff`：查看 Agent 修改了哪些内容
+
+后续会逐步加入：
+
 - `run_command`：运行测试或构建命令
 - 权限控制：限制危险命令和越界文件访问
 - 执行轨迹记录：记录每一步工具调用、耗时、结果和失败原因

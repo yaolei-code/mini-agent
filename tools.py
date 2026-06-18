@@ -13,7 +13,9 @@ Agent 不是真的"调用"了函数，而是 LLM 输出了一段文字说"我要
 
 import math
 import datetime
+import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -201,6 +203,114 @@ def search_code(query: str) -> str:
 
 
 # ============================================================
+# Coding 工具 4：修改文件
+# ============================================================
+def _parse_json_input(input_text: str) -> dict:
+    """
+    解析工具的 JSON 输入。
+    允许模型把 JSON 包在 ```json ... ``` 代码块里。
+    """
+    text = input_text.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    return json.loads(text)
+
+
+def apply_patch(input_text: str) -> str:
+    """
+    对工作区内的文本文件做安全替换。
+
+    输入 JSON：
+    {
+      "file": "相对路径",
+      "old_text": "要替换的原文",
+      "new_text": "替换后的文本"
+    }
+    """
+    try:
+        data = _parse_json_input(input_text)
+        file_path = data.get("file", "").strip()
+        old_text = data.get("old_text", "")
+        new_text = data.get("new_text", "")
+
+        if not file_path:
+            return "修改失败：缺少 file 字段。"
+        if old_text == "":
+            return "修改失败：old_text 不能为空。"
+
+        path = _resolve_workspace_path(file_path)
+        if not path.exists():
+            return f"修改失败，文件不存在：{file_path}"
+        if not path.is_file():
+            return f"修改失败，这不是文件：{file_path}"
+        if _is_ignored(path):
+            return f"修改失败，拒绝修改被忽略或敏感文件：{file_path}"
+        if not _is_text_file(path):
+            return f"修改失败，暂不修改非文本文件：{file_path}"
+
+        content = path.read_text(encoding="utf-8", errors="replace")
+        count = content.count(old_text)
+        if count == 0:
+            return "修改失败：old_text 在文件中没有找到。请先 read_file 确认原文。"
+        if count > 1:
+            return f"修改失败：old_text 在文件中出现 {count} 次。请提供更长、更精确的上下文，避免误改。"
+
+        updated = content.replace(old_text, new_text, 1)
+        path.write_text(updated, encoding="utf-8")
+        return f"修改成功：{path.relative_to(WORKSPACE_ROOT)}"
+    except json.JSONDecodeError as e:
+        return f"修改失败：Action Input 必须是 JSON。解析错误：{e}"
+    except Exception as e:
+        return f"修改失败：{e}"
+
+
+# ============================================================
+# Coding 工具 5：查看 Git diff
+# ============================================================
+def git_diff(path_text: str = "") -> str:
+    """
+    查看工作区 Git diff。
+    输入可以为空，也可以是相对文件路径。
+    """
+    try:
+        command = ["git", "diff", "--"]
+        target = path_text.strip()
+        if target:
+            path = _resolve_workspace_path(target)
+            command.append(str(path.relative_to(WORKSPACE_ROOT)))
+
+        result = subprocess.run(
+            command,
+            cwd=WORKSPACE_ROOT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=10,
+        )
+
+        if result.returncode != 0:
+            message = result.stderr.strip() or result.stdout.strip()
+            return f"查看 diff 失败：{message}"
+
+        diff_text = result.stdout.strip()
+        if not diff_text:
+            return "当前没有未提交的 Git diff。"
+
+        max_chars = 12000
+        if len(diff_text) > max_chars:
+            diff_text = diff_text[:max_chars] + "\n\n[diff 过长，已截断]"
+        return "Git diff：\n" + diff_text
+    except Exception as e:
+        return f"查看 diff 失败：{e}"
+
+
+# ============================================================
 # 工具 1：计算器
 # ============================================================
 def calculator(expression: str) -> str:
@@ -315,6 +425,14 @@ TOOLS = {
     "search_code": {
         "func": search_code,
         "description": "在代码工作区中搜索关键词。输入关键词，如 'login'、'password'、'UserService'，返回匹配的文件、行号和代码行。",
+    },
+    "apply_patch": {
+        "func": apply_patch,
+        "description": "修改工作区中的文本文件。输入 JSON：{\"file\":\"相对路径\",\"old_text\":\"要替换的原文\",\"new_text\":\"替换后的文本\"}。old_text 必须在文件中只出现一次。修改前应先 read_file 确认内容。",
+    },
+    "git_diff": {
+        "func": git_diff,
+        "description": "查看当前未提交的 Git diff。输入可以为空，查看全部 diff；也可以输入相对文件路径，只查看某个文件的 diff。",
     },
     "calculator": {
         "func": calculator,
