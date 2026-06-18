@@ -9,7 +9,14 @@ main.py —— 启动你的第一个 AI Coding Agent！
   5. 输入代码分析任务，看 Agent 一步步观察代码仓库！
 """
 
+import sys
+
 from agent import ReActAgent
+
+if hasattr(sys.stdin, "reconfigure"):
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
 def main():

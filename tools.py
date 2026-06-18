@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
 # ============================================================
@@ -40,6 +40,10 @@ IGNORED_DIRS = {
     "target",
     "dist",
     "build",
+}
+
+IGNORED_FILES = {
+    ".env",
 }
 
 TEXT_FILE_SUFFIXES = {
@@ -82,7 +86,7 @@ def _resolve_workspace_path(path_text: str) -> Path:
 
 
 def _is_ignored(path: Path) -> bool:
-    return any(part in IGNORED_DIRS for part in path.parts)
+    return path.name in IGNORED_FILES or any(part in IGNORED_DIRS for part in path.parts)
 
 
 def _is_text_file(path: Path) -> bool:

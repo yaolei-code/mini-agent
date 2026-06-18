@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 from tools import execute_tool, get_tools_description
 
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 # 加载 .env 文件中的环境变量
 load_dotenv()
@@ -228,7 +228,11 @@ class ReActAgent:
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
-            return f"Error: {e}"
+            return (
+                "Thought: 调用大模型失败，我无法继续使用工具。\n"
+                "Action: Finish\n"
+                f"Action Input: 调用大模型失败：{e}"
+            )
 
     def _parse_response(self, response: str) -> dict | None:
         """
