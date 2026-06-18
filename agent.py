@@ -21,9 +21,13 @@ ReAct Agent = 普通的 Agent + 在行动前先思考
 import re
 import json
 import os
+import sys
 from openai import OpenAI
 from dotenv import load_dotenv
 from tools import execute_tool, get_tools_description
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 # 加载 .env 文件中的环境变量
 load_dotenv()
@@ -36,7 +40,7 @@ load_dotenv()
 # prompt 写得好不好，直接决定了 Agent 稳不稳定、聪不聪明。
 # 试试改这里的文字，观察 Agent 的行为怎么变化！
 
-SYSTEM_PROMPT = """你是一个能使用工具的 AI 助手。你需要一步步思考，使用工具来回答用户的问题。
+SYSTEM_PROMPT = """你是一个学习版 AI Coding Agent。你需要一步步观察代码仓库，使用工具帮助用户理解、定位和分析代码问题。
 
 ## 你可以使用的工具
 
@@ -57,14 +61,17 @@ Action Input: [传给工具的输入参数，或者你的最终答案（当 Acti
 3. 工具的返回结果会以 "Observation: ..." 的形式返回给你，你需要在下一轮继续思考。
 4. 当你收集到足够的信息、可以回答用户时，Action 写 "Finish"，Action Input 写你的完整回答。
 5. 不要编造信息。如果你通过工具查不到，就如实告诉用户。
+6. 当前版本是只读 Coding Agent。你可以查看、搜索和分析代码，但不能修改文件，也不能声称已经修改了代码。
+7. 遇到代码任务时，优先使用 list_files 了解项目结构，再用 search_code 定位关键词，最后用 read_file 阅读关键文件。
+8. 最终回答要说明你查看了哪些文件、发现了什么、建议下一步怎么改。
 
 ## 示例
 
-用户："3 乘以 5 加上 2 等于多少？"
+用户："这个项目的登录逻辑在哪里？"
 
-Thought: 用户想算 3×5+2。我可以用计算器工具来算。
-Action: calculator
-Action Input: 3 * 5 + 2
+Thought: 用户想定位登录逻辑。我需要先查看项目结构，判断这是 Java、Python 还是前端项目。
+Action: list_files
+Action Input: .
 
 ---
 
@@ -134,7 +141,7 @@ class ReActAgent:
 
         if self.verbose:
             print("=" * 60)
-            print(f"👤 用户提问：{user_question}")
+            print(f"[USER] 用户提问：{user_question}")
             print("=" * 60)
 
         # ============================================
@@ -143,9 +150,9 @@ class ReActAgent:
         # 这就是你面试被问到 "Agent 怎么实现的" 时的标准答案。
         for step in range(1, max_steps + 1):
             if self.verbose:
-                print(f"\n{'─' * 40}")
-                print(f"📍 第 {step} 步")
-                print(f"{'─' * 40}")
+                print(f"\n{'-' * 40}")
+                print(f"[STEP] 第 {step} 步")
+                print(f"{'-' * 40}")
 
             # --- 步骤 1：调用 LLM，获取下一步的 Thought 和 Action ---
             response = self._call_llm(messages)
@@ -156,7 +163,7 @@ class ReActAgent:
             if parsed is None:
                 # LLM 输出格式不对，提醒它重新输出
                 if self.verbose:
-                    print("⚠️ LLM 输出格式异常，要求重新输出")
+                    print("[WARN] LLM 输出格式异常，要求重新输出")
                 messages.append({
                     "role": "user",
                     "content": "你的输出格式不正确。请严格按照格式输出：\nThought: [你的思考]\nAction: [工具名或Finish]\nAction Input: [参数或最终答案]"
@@ -168,17 +175,17 @@ class ReActAgent:
             action_input = parsed.get("action_input", "")
 
             if self.verbose:
-                print(f"💭 思考：{thought}")
-                print(f"🔧 行动：{action}")
+                print(f"[THOUGHT] 思考：{thought}")
+                print(f"[ACTION] 行动：{action}")
                 if action != "Finish":
-                    print(f"📥 输入：{action_input}")
+                    print(f"[INPUT] 输入：{action_input}")
 
             # --- 步骤 3：判断是继续还是结束 ---
             if action == "Finish":
                 # Agent 认为任务完成了，返回最终答案
                 if self.verbose:
                     print(f"\n{'=' * 60}")
-                    print(f"✅ Agent 完成！")
+                    print("[DONE] Agent 完成！")
                     print(f"{'=' * 60}")
                 return action_input
 
@@ -188,7 +195,7 @@ class ReActAgent:
             if self.verbose:
                 # 截断过长的 observation
                 display_obs = observation[:200] + "..." if len(observation) > 200 else observation
-                print(f"👁️ 观察：{display_obs}")
+                print(f"[OBSERVATION] 观察：{display_obs}")
 
             # --- 步骤 5：把 LLM 的输出和执行结果追加到对话历史 ---
             # 这一步非常关键！Agent 正是通过不断往 messages 里加东西，
@@ -270,11 +277,11 @@ class ReActAgent:
 # 自测：如果你直接运行这个文件
 # ============================================================
 if __name__ == "__main__":
-    print("🧪 测试 Agent（请在 .env 文件中配置 DEEPSEEK_API_KEY）\n")
+    print("[TEST] 测试 Agent（请在 .env 文件中配置 DEEPSEEK_API_KEY）\n")
 
     agent = ReActAgent(verbose=True)
 
     # 测试一个简单的数学问题
     question = "3 乘以 5 加上 2 等于多少？"
     answer = agent.run(question)
-    print(f"\n📝 最终答案：{answer}")
+    print(f"\n[ANSWER] 最终答案：{answer}")

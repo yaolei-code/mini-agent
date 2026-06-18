@@ -41,6 +41,24 @@ mini-agent/
 
 ---
 
+## 🧩 当前进度：Mini Coding Agent v1
+
+这个项目已经从通用 ReAct Agent 迈出了第一步，开始升级为 **AI Coding Agent**。
+
+当前版本是 **只读 Coding Agent**，它可以：
+
+- `list_files`：查看代码项目结构
+- `search_code`：搜索代码关键词
+- `read_file`：读取关键源码文件
+
+当前版本暂时不会修改文件。下一步会继续加入：
+
+- `apply_patch`：用 patch 修改代码
+- `run_command`：运行测试或构建命令
+- `git_diff`：查看 agent 修改了哪些内容
+
+---
+
 ## 🚀 快速开始
 
 ### 1. 安装依赖
@@ -63,9 +81,17 @@ python main.py
 ```
 
 ### 4. 试试这些问题
-- "根号 16 加上 3 的平方等于多少？"
-- "北京今天天气怎么样？故宫什么时候开放？"
-- "现在几点了？Python 是谁发明的？"
+- "这个项目是什么结构？"
+- "帮我找一下 ReActAgent 类在哪里"
+- "搜索 password 相关代码，并告诉我可能的问题"
+
+### 5. 分析其他代码项目
+默认情况下，Agent 会分析当前目录。你也可以设置 `AGENT_WORKSPACE` 指向另一个项目：
+
+```bash
+set AGENT_WORKSPACE=E:\path\to\your\java-project
+python main.py
+```
 
 ---
 

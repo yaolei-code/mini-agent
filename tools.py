@@ -13,6 +13,187 @@ Agent 不是真的"调用"了函数，而是 LLM 输出了一段文字说"我要
 
 import math
 import datetime
+import os
+import sys
+from pathlib import Path
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+
+# ============================================================
+# Coding Agent 的工作区配置
+# ============================================================
+# 默认把当前运行目录当成工作区。以后运行 agent 时，可以通过
+# AGENT_WORKSPACE 指向一个 Java/Spring Boot 项目目录。
+WORKSPACE_ROOT = Path(os.getenv("AGENT_WORKSPACE", os.getcwd())).resolve()
+
+IGNORED_DIRS = {
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".venv",
+    "venv",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+}
+
+TEXT_FILE_SUFFIXES = {
+    ".py",
+    ".java",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+    ".vue",
+    ".html",
+    ".css",
+    ".scss",
+    ".xml",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".properties",
+    ".md",
+    ".txt",
+    ".sql",
+    ".gradle",
+}
+
+
+def _resolve_workspace_path(path_text: str) -> Path:
+    """
+    把 Agent 给出的路径转换成工作区内的绝对路径。
+    这是 coding agent 的安全边界：工具只能读取 AGENT_WORKSPACE 里面的文件。
+    """
+    raw_path = path_text.strip() or "."
+    candidate = Path(raw_path)
+    if not candidate.is_absolute():
+        candidate = WORKSPACE_ROOT / candidate
+
+    resolved = candidate.resolve()
+    if resolved != WORKSPACE_ROOT and WORKSPACE_ROOT not in resolved.parents:
+        raise ValueError(f"路径越界：{path_text}")
+    return resolved
+
+
+def _is_ignored(path: Path) -> bool:
+    return any(part in IGNORED_DIRS for part in path.parts)
+
+
+def _is_text_file(path: Path) -> bool:
+    return path.suffix.lower() in TEXT_FILE_SUFFIXES or path.name in {
+        "pom.xml",
+        "package.json",
+        "requirements.txt",
+        ".gitignore",
+    }
+
+
+# ============================================================
+# Coding 工具 1：列出文件
+# ============================================================
+def list_files(path_text: str = ".") -> str:
+    """
+    列出工作区中的文件和目录。
+    输入相对路径，比如 "." 或 "src/main/java"。
+    """
+    try:
+        root = _resolve_workspace_path(path_text)
+        if not root.exists():
+            return f"路径不存在：{path_text}"
+        if root.is_file():
+            return f"{root.relative_to(WORKSPACE_ROOT)}"
+
+        lines = []
+        for item in sorted(root.iterdir(), key=lambda p: (p.is_file(), p.name.lower())):
+            if _is_ignored(item):
+                continue
+            rel = item.relative_to(WORKSPACE_ROOT)
+            suffix = "/" if item.is_dir() else ""
+            lines.append(f"{rel}{suffix}")
+
+        if not lines:
+            return f"{path_text} 目录为空，或只包含被忽略的文件。"
+        return "工作区文件列表：\n" + "\n".join(lines)
+    except Exception as e:
+        return f"列出文件失败：{e}"
+
+
+# ============================================================
+# Coding 工具 2：读取文件
+# ============================================================
+def read_file(path_text: str) -> str:
+    """
+    读取工作区中的文本文件。
+    输入相对路径，比如 "src/main/java/com/example/UserService.java"。
+    """
+    try:
+        path = _resolve_workspace_path(path_text)
+        if not path.exists():
+            return f"文件不存在：{path_text}"
+        if not path.is_file():
+            return f"这不是文件：{path_text}"
+        if _is_ignored(path):
+            return f"拒绝读取被忽略目录中的文件：{path_text}"
+        if not _is_text_file(path):
+            return f"暂不读取非文本文件：{path_text}"
+
+        content = path.read_text(encoding="utf-8", errors="replace")
+        max_chars = 12000
+        if len(content) > max_chars:
+            content = content[:max_chars] + "\n\n[文件过长，已截断]"
+
+        return f"文件：{path.relative_to(WORKSPACE_ROOT)}\n\n{content}"
+    except Exception as e:
+        return f"读取文件失败：{e}"
+
+
+# ============================================================
+# Coding 工具 3：搜索代码
+# ============================================================
+def search_code(query: str) -> str:
+    """
+    在工作区文本文件中搜索关键词。
+    输入关键词，比如 "login"、"UserService"、"password"。
+    """
+    query = query.strip()
+    if not query:
+        return "搜索关键词不能为空。"
+
+    matches = []
+    max_matches = 50
+
+    try:
+        for path in WORKSPACE_ROOT.rglob("*"):
+            if len(matches) >= max_matches:
+                break
+            if not path.is_file() or _is_ignored(path) or not _is_text_file(path):
+                continue
+
+            try:
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except Exception:
+                continue
+
+            for line_no, line in enumerate(lines, start=1):
+                if query.lower() in line.lower():
+                    rel = path.relative_to(WORKSPACE_ROOT)
+                    matches.append(f"{rel}:{line_no}: {line.strip()}")
+                    if len(matches) >= max_matches:
+                        break
+
+        if not matches:
+            return f"没有搜索到关键词：{query}"
+
+        extra = "\n[结果过多，已截断]" if len(matches) >= max_matches else ""
+        return "搜索结果：\n" + "\n".join(matches) + extra
+    except Exception as e:
+        return f"搜索代码失败：{e}"
 
 
 # ============================================================
@@ -56,16 +237,16 @@ def calculator(expression: str) -> str:
         # 安全检查：遍历表达式中用到的所有名字
         for name in code.co_names:
             if name not in allowed_names:
-                return f"❌ 不允许使用 '{name}'，只能使用数学运算"
+                return f"[错误] 不允许使用 '{name}'，只能使用数学运算"
 
         # 在安全的名字空间里执行
         result = eval(code, {"__builtins__": {}}, allowed_names)
         return f"计算结果：{result}"
 
     except ZeroDivisionError:
-        return "❌ 错误：不能除以零"
+        return "[错误] 不能除以零"
     except Exception as e:
-        return f"❌ 计算出错：{e}"
+        return f"[错误] 计算出错：{e}"
 
 
 # ============================================================
@@ -104,7 +285,9 @@ def search(query: str) -> str:
 def get_current_time(_unused: str = "") -> str:
     """获取当前日期和时间。参数被忽略。"""
     now = datetime.datetime.now()
-    return f"当前时间：{now.strftime('%Y年%m月%d日 %H:%M:%S')}，星期{['一','二','三','四','五','六','日'][now.weekday()]}"
+    time_text = now.strftime("%Y-%m-%d %H:%M:%S")
+    weekday = ["一", "二", "三", "四", "五", "六", "日"][now.weekday()]
+    return f"当前时间：{time_text}，星期{weekday}"
 
 
 # ============================================================
@@ -117,6 +300,18 @@ def get_current_time(_unused: str = "") -> str:
 #   3. description：工具的说明（会被写进 prompt，告诉 LLM 这个工具能干什么）
 
 TOOLS = {
+    "list_files": {
+        "func": list_files,
+        "description": "列出代码工作区中的文件和目录。输入相对路径，如 '.'、'src'、'src/main/java'。这是理解项目结构的第一步。",
+    },
+    "read_file": {
+        "func": read_file,
+        "description": "读取代码工作区中的文本文件。输入相对文件路径，如 'pom.xml' 或 'src/main/java/com/example/UserService.java'。",
+    },
+    "search_code": {
+        "func": search_code,
+        "description": "在代码工作区中搜索关键词。输入关键词，如 'login'、'password'、'UserService'，返回匹配的文件、行号和代码行。",
+    },
     "calculator": {
         "func": calculator,
         "description": "数学计算器。输入一个数学表达式（如 '2+3*4' 或 'sqrt(16)'），返回计算结果。支持加减乘除、三角函数、开方、对数等。",
@@ -138,13 +333,13 @@ def execute_tool(tool_name: str, tool_input: str) -> str:
     如果工具不存在，返回错误信息。
     """
     if tool_name not in TOOLS:
-        return f"❌ 未知工具：'{tool_name}'。可用的工具有：{', '.join(TOOLS.keys())}"
+        return f"[错误] 未知工具：'{tool_name}'。可用的工具有：{', '.join(TOOLS.keys())}"
 
     try:
         result = TOOLS[tool_name]["func"](tool_input.strip())
         return str(result)
     except Exception as e:
-        return f"❌ 工具执行失败：{e}"
+        return f"[错误] 工具执行失败：{e}"
 
 
 def get_tools_description() -> str:
@@ -163,13 +358,22 @@ def get_tools_description() -> str:
 # 自测：如果你直接运行这个文件，会测试每个工具
 # ============================================================
 if __name__ == "__main__":
-    print("🧪 测试工具：calculator")
+    print("[TEST] list_files")
+    print(list_files("."))
+
+    print("\n[TEST] search_code")
+    print(search_code("ReActAgent"))
+
+    print("\n[TEST] read_file")
+    print(read_file("main.py")[:500])
+
+    print("\n[TEST] calculator")
     print("  2 + 3 * 4 =", calculator("2 + 3 * 4"))
     print("  sqrt(16) =", calculator("sqrt(16)"))
 
-    print("\n🧪 测试工具：search")
-    print("  北京天气 →", search("北京天气"))
-    print("  OpenAI →", search("OpenAI"))
+    print("\n[TEST] search")
+    print("  北京天气 ->", search("北京天气"))
+    print("  OpenAI ->", search("OpenAI"))
 
-    print("\n🧪 测试工具：get_current_time")
+    print("\n[TEST] get_current_time")
     print("  ", get_current_time())
