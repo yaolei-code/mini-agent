@@ -286,11 +286,12 @@ def git_diff(path_text: str = "") -> str:
 
         result = subprocess.run(
             command,
-            cwd=WORKSPACE_ROOT,
-            text=True,
+            cwd=str(WORKSPACE_ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
             encoding="utf-8",
             errors="replace",
-            capture_output=True,
             timeout=10,
         )
 
@@ -308,6 +309,87 @@ def git_diff(path_text: str = "") -> str:
         return "Git diff：\n" + diff_text
     except Exception as e:
         return f"查看 diff 失败：{e}"
+
+
+# ============================================================
+# Coding 工具 6：运行命令
+# ============================================================
+DANGEROUS_PATTERNS = [
+    "rm -rf /",
+    "rm -r /",
+    "rm -fr /",
+    "rm -rf ~",
+    "rm -rf .",
+    "find . -delete",
+    "sudo ",
+    "su ",
+    ":(){ :|:& };:",
+    "mkfs.",
+    "dd if=",
+    "> /dev/sda",
+    "chmod 777 /",
+    "chown -R /",
+    "shutdown",
+    "reboot",
+    "halt",
+    "poweroff",
+    "systemctl poweroff",
+]
+
+
+def run_command(command: str) -> str:
+    """
+    在工作区目录中运行一个 shell 命令，返回 stdout 和 stderr。
+    常用于运行测试（如 pytest、mvn test）、构建（如 npm run build）
+    或版本控制命令（如 git status、git log）。
+    """
+    command = command.strip()
+    if not command:
+        return "运行命令失败：命令不能为空。"
+
+    # 安全检查
+    command_lower = command.lower()
+    for pattern in DANGEROUS_PATTERNS:
+        if pattern.lower() in command_lower:
+            return f"运行命令失败：检测到危险操作（{pattern}），命令被拒绝。"
+
+    try:
+        result = subprocess.run(
+            command,
+            cwd=str(WORKSPACE_ROOT),
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+        )
+
+        out = result.stdout.strip()
+        err = result.stderr.strip()
+        exit_code = result.returncode
+
+        parts = []
+        if out:
+            max_out = 8000
+            if len(out) > max_out:
+                out = out[:max_out] + "\n\n[stdout 过长，已截断]"
+            parts.append(f"[stdout]\n{out}")
+        if err:
+            max_err = 4000
+            if len(err) > max_err:
+                err = err[:max_err] + "\n\n[stderr 过长，已截断]"
+            parts.append(f"[stderr]\n{err}")
+        if not parts:
+            parts.append("(无输出)")
+
+        header = f"命令执行完成（exit code: {exit_code}）"
+        return header + "\n" + "\n\n".join(parts)
+    except subprocess.TimeoutExpired:
+        return "运行命令失败：命令执行超时（60 秒）。"
+    except Exception as e:
+        return f"运行命令失败：{e}"
 
 
 # ============================================================
@@ -433,6 +515,10 @@ TOOLS = {
     "git_diff": {
         "func": git_diff,
         "description": "查看当前未提交的 Git diff。输入可以为空，查看全部 diff；也可以输入相对文件路径，只查看某个文件的 diff。",
+    },
+    "run_command": {
+        "func": run_command,
+        "description": "在工作区目录中运行一个 shell 命令。输入完整命令，如 'pytest'、'mvn test'、'npm run build'、'git status'。禁止危险操作（如 rm -rf、sudo）。超时 60 秒。",
     },
     "calculator": {
         "func": calculator,

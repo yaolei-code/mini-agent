@@ -17,17 +17,18 @@
 
 ## 当前能力
 
-当前版本是 Mini Coding Agent v2，支持查看、搜索、读取和小范围修改文本文件。
+当前版本是 Mini Coding Agent v3，支持查看、搜索、读取、修改文本文件，以及运行命令。
 
-Agent 可以使用这些代码工具：
+Agent 可以使用这些工具：
 
 - `list_files`：查看工作区文件结构
 - `search_code`：搜索代码关键词
 - `read_file`：读取指定源码文件
 - `apply_patch`：用 old/new 文本替换方式修改文件
 - `git_diff`：查看当前未提交的 Git diff
+- `run_command`：在工作区中运行 shell 命令（如测试、构建）
 
-当前版本还不会执行测试命令。它适合用来理解代码仓库结构、定位关键文件、修改小范围文本内容，并通过 Git diff 检查修改结果。
+当前版本可以完成"查看→搜索→阅读→修改→验证"的完整循环：修改代码后运行测试确认改动没有破坏现有功能，再通过 Git diff 检查修改结果。
 
 ## 工作流程
 
@@ -51,6 +52,7 @@ list_files
 -> read_file
 -> apply_patch
 -> git_diff
+-> run_command（运行测试验证）
 -> Finish
 ```
 
@@ -93,6 +95,7 @@ mini-agent/
 ```text
 Spring Boot: Controller -> Service -> Repository
 AI Agent:   main.py    -> agent.py -> tools.py
+                                  -> TraceStep（轨迹记录）
 ```
 
 - `main.py`：接收用户输入，相当于入口层
@@ -157,6 +160,10 @@ python main.py
 把 README 里某一句话改得更简洁，然后查看 diff
 ```
 
+```text
+运行 python -m py_compile tools.py agent.py main.py 检查语法
+```
+
 ## 分析其他项目
 
 默认情况下，Agent 会分析当前目录。也可以设置 `AGENT_WORKSPACE` 指向另一个代码项目：
@@ -182,12 +189,15 @@ python main.py
 
 - `apply_patch`：通过 patch 修改文件
 - `git_diff`：查看 Agent 修改了哪些内容
+- `run_command`：运行测试或构建命令
+- 执行轨迹记录：记录每一步工具调用、耗时、结果和失败原因
+- 基础权限控制：危险命令拦截（rm -rf、sudo 等）
 
 后续会逐步加入：
 
-- `run_command`：运行测试或构建命令
-- 权限控制：限制危险命令和越界文件访问
-- 执行轨迹记录：记录每一步工具调用、耗时、结果和失败原因
+- 细粒度权限控制：限制工作区外文件访问、可配置允许的命令列表
+- 接入真实搜索 API：替换模拟搜索为 SerpAPI / Tavily 等
+- 上下文自动压缩：当对话超过模型 context window 时自动压缩历史
 
 最终目标是实现一个可以辅助修复 Java/Spring Boot 项目简单问题的本地 Coding Agent。
 

@@ -22,6 +22,7 @@ import re
 import json
 import os
 import sys
+import time
 from openai import OpenAI
 from dotenv import load_dotenv
 from tools import execute_tool, get_tools_description
@@ -66,8 +67,9 @@ Action Input: [传给工具的输入参数，或者你的最终答案（当 Acti
 8. 需要修改文件时，使用 apply_patch。apply_patch 的 Action Input 必须是 JSON，格式为 {"file":"相对路径","old_text":"要替换的原文","new_text":"替换后的文本"}。
 9. old_text 必须足够精确，并且应该来自 read_file 看到的真实文件内容。不要整文件重写。
 10. 修改后必须调用 git_diff 查看改动，再给出最终回答。
-11. 最终回答要说明你查看了哪些文件、修改了哪些文件、为什么这么改、diff 是否符合预期。
-12. 输出保持工程化和简洁，不要使用 emoji，不要使用营销化或夸张语气。
+11. 修改代码后，应使用 run_command 运行相关测试或构建命令，验证修改没有破坏现有功能。
+12. 最终回答要说明你查看了哪些文件、修改了哪些文件、为什么这么改、diff 是否符合预期、测试是否通过。
+13. 输出保持工程化和简洁，不要使用 emoji，不要使用营销化或夸张语气。
 
 ## 示例
 
@@ -80,6 +82,45 @@ Action Input: .
 ---
 
 现在开始！记住：每一步都必须包含 Thought、Action、Action Input 三行。"""
+
+
+# ============================================================
+# 执行轨迹记录
+# ============================================================
+_TOOL_ERROR_PREFIXES = (
+    "[错误]",
+    "列出文件失败",
+    "路径不存在",
+    "读取文件失败",
+    "文件不存在",
+    "这不是文件",
+    "拒绝读取",
+    "暂不读取",
+    "搜索代码失败",
+    "没有搜索到关键词",
+    "修改失败",
+    "查看 diff 失败",
+    "运行命令失败",
+    "搜索结果（",
+)
+
+
+def _is_tool_success(observation: str) -> bool:
+    """判断工具执行是否成功（observation 不以已知错误前缀开头）。"""
+    return not observation.startswith(_TOOL_ERROR_PREFIXES)
+
+
+class TraceStep:
+    """记录 Agent 每一步的工具调用信息。"""
+    def __init__(self, step_number, thought, action, action_input,
+                 observation, duration_ms, success):
+        self.step_number = step_number
+        self.thought = thought
+        self.action = action
+        self.action_input = action_input
+        self.observation = observation
+        self.duration_ms = duration_ms
+        self.success = success
 
 
 # ============================================================
@@ -138,6 +179,7 @@ class ReActAgent:
         # 这就是 LLM 看到的"上下文"。
         # 如果对话太长，超过了模型的 context window，
         # 就需要 "auto compact"（自动压缩）—— 这是 Codex/OpenClaw 的核心功能之一。
+        self.traces = []
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": user_question},
@@ -153,6 +195,8 @@ class ReActAgent:
         # ============================================
         # 这就是你面试被问到 "Agent 怎么实现的" 时的标准答案。
         for step in range(1, max_steps + 1):
+            step_start = time.time()
+
             if self.verbose:
                 print(f"\n{'-' * 40}")
                 print(f"[STEP] 第 {step} 步")
@@ -168,6 +212,15 @@ class ReActAgent:
                 # LLM 输出格式不对，提醒它重新输出
                 if self.verbose:
                     print("[WARN] LLM 输出格式异常，要求重新输出")
+                self.traces.append(TraceStep(
+                    step_number=step,
+                    thought="",
+                    action="(parse error)",
+                    action_input="",
+                    observation="LLM 输出格式异常",
+                    duration_ms=(time.time() - step_start) * 1000,
+                    success=False,
+                ))
                 messages.append({
                     "role": "user",
                     "content": "你的输出格式不正确。请严格按照格式输出：\nThought: [你的思考]\nAction: [工具名或Finish]\nAction Input: [参数或最终答案]"
@@ -186,20 +239,47 @@ class ReActAgent:
 
             # --- 步骤 3：判断是继续还是结束 ---
             if action == "Finish":
-                # Agent 认为任务完成了，返回最终答案
+                duration_ms = (time.time() - step_start) * 1000
+                self.traces.append(TraceStep(
+                    step_number=step,
+                    thought=thought,
+                    action="Finish",
+                    action_input=action_input[:200],
+                    observation="",
+                    duration_ms=duration_ms,
+                    success=True,
+                ))
                 if self.verbose:
                     print(f"\n{'=' * 60}")
                     print("[DONE] Agent 完成！")
                     print(f"{'=' * 60}")
+                    self._print_trace_summary()
                 return action_input
 
             # --- 步骤 4：执行工具 ---
+            tool_start = time.time()
             observation = execute_tool(action, action_input)
+            tool_duration_ms = (time.time() - tool_start) * 1000
+
+            success = _is_tool_success(observation)
+
+            total_duration_ms = (time.time() - step_start) * 1000
+
+            self.traces.append(TraceStep(
+                step_number=step,
+                thought=thought,
+                action=action,
+                action_input=action_input[:200],
+                observation=observation[:500],
+                duration_ms=total_duration_ms,
+                success=success,
+            ))
 
             if self.verbose:
                 # 截断过长的 observation
                 display_obs = observation[:200] + "..." if len(observation) > 200 else observation
                 print(f"[OBSERVATION] 观察：{display_obs}")
+                print(f"[TRACE] 本步耗时：{total_duration_ms:.0f}ms（工具耗时：{tool_duration_ms:.0f}ms）")
 
             # --- 步骤 5：把 LLM 的输出和执行结果追加到对话历史 ---
             # 这一步非常关键！Agent 正是通过不断往 messages 里加东西，
@@ -214,7 +294,30 @@ class ReActAgent:
             })
 
         # 超过最大步数，强制结束
+        if self.verbose:
+            self._print_trace_summary()
         return "抱歉，思考步骤超过了限制。请尝试把问题拆分成更小的子问题。"
+
+    def _print_trace_summary(self):
+        """打印执行轨迹汇总表。"""
+        if not self.traces:
+            return
+        print(f"\n{'=' * 60}")
+        print("[TRACE SUMMARY] 执行轨迹汇总")
+        print(f"{'=' * 60}")
+        total_ms = sum(t.duration_ms for t in self.traces)
+        success_count = sum(1 for t in self.traces if t.success)
+        fail_count = len(self.traces) - success_count
+        print(f"  总步数：{len(self.traces)}  |  成功：{success_count}  |  失败：{fail_count}  |  总耗时：{total_ms:.0f}ms")
+        print(f"  {'-' * 56}")
+        for t in self.traces:
+            status = "OK" if t.success else "FAIL"
+            action_display = t.action
+            if t.action_input:
+                inp = t.action_input[:60].replace("\n", " ")
+                action_display = f"{t.action}({inp})"
+            print(f"  [{status}] 步骤{t.step_number}  {action_display}  ({t.duration_ms:.0f}ms)")
+        print(f"{'=' * 60}")
 
     def _call_llm(self, messages: list) -> str:
         """
