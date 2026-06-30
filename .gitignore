@@ -12,6 +12,7 @@ venv/
 .idea/
 .reasonix/
 reasonix.toml
+gradio*.log
 
 dist/
 build/

@@ -30,6 +30,8 @@ Agent 可以使用这些工具：
 
 当前版本可以完成"查看→搜索→阅读→修改→验证"的完整循环：修改代码后运行测试确认改动没有破坏现有功能，再通过 Git diff 检查修改结果。
 
+同时提供 Gradio 网页端演示，可以在浏览器中输入任务，并查看最终回答、步骤总览和每一步工具调用详情，方便面试或课程展示。
+
 ## 工作流程
 
 Agent 的核心流程如下：
@@ -87,6 +89,7 @@ mini-agent/
 ├── tools.py          # 工具层：文件列表、代码搜索、文件读取等
 ├── agent.py          # Agent 核心循环
 ├── main.py           # 命令行入口
+├── app.py            # Gradio 网页演示入口
 └── README.md         # 项目说明
 ```
 
@@ -95,10 +98,12 @@ mini-agent/
 ```text
 Spring Boot: Controller -> Service -> Repository
 AI Agent:   main.py    -> agent.py -> tools.py
+            app.py
                                   -> TraceStep（轨迹记录）
 ```
 
 - `main.py`：接收用户输入，相当于入口层
+- `app.py`：提供网页端交互和步骤可视化，相当于展示层
 - `agent.py`：管理 ReAct 循环，相当于核心业务层
 - `tools.py`：真正执行文件读取、搜索等动作，相当于工具/外部资源访问层
 
@@ -135,6 +140,19 @@ DEEPSEEK_MODEL=deepseek-chat
 ```powershell
 python main.py
 ```
+
+如果要启动网页演示：
+
+```powershell
+python app.py
+```
+
+启动后浏览器会打开本地 Gradio 页面，可以输入任务并查看：
+
+- 最终回答
+- 每一步 Action / Action Input
+- 工具 Observation
+- 每一步耗时和成功状态
 
 如果你的系统 Python 版本太旧，可以临时使用 Codex 自带的 Python：
 
@@ -192,6 +210,7 @@ python main.py
 - `run_command`：运行测试或构建命令
 - 执行轨迹记录：记录每一步工具调用、耗时、结果和失败原因
 - 基础权限控制：危险命令拦截（rm -rf、sudo 等）
+- Gradio 网页端：展示 Agent 最终回答、步骤总览和工具调用详情
 
 后续会逐步加入：
 
