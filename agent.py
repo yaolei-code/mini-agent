@@ -157,8 +157,8 @@ class ReActAgent:
         self.model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
         # 把工具描述插入 system prompt
-        self.system_prompt = SYSTEM_PROMPT.format(
-            tools_description=get_tools_description()
+        self.system_prompt = SYSTEM_PROMPT.replace(
+            "{tools_description}", get_tools_description()
         )
 
     def run(self, user_question: str, max_steps: int = 10) -> str:

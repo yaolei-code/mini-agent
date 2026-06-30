@@ -7,6 +7,7 @@ agent.py, so the web demo and command-line demo share the same core logic.
 
 import html
 import os
+import socket
 import time
 
 os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost")
@@ -18,6 +19,9 @@ from dotenv import load_dotenv
 from agent import ReActAgent
 
 load_dotenv()
+
+DEFAULT_PORT = 7860
+MAX_PORT = 7870
 
 
 EXAMPLES = [
@@ -33,6 +37,35 @@ def _shorten(text: str, max_chars: int = 900) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars] + "\n\n[内容较长，已截断]"
+
+
+def _has_api_key() -> bool:
+    api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    return bool(api_key and api_key != "your-api-key-here")
+
+
+def _error_result(message: str):
+    safe_message = html.escape(message).replace("\n", "<br>")
+    return message, [], f"<p>{safe_message}</p>", "运行失败"
+
+
+def _find_free_port(start_port: int = DEFAULT_PORT, max_port: int = MAX_PORT) -> int:
+    for port in range(start_port, max_port + 1):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return port
+    raise OSError(f"Cannot find empty port in range: {start_port}-{max_port}.")
+
+
+def _get_server_port() -> int:
+    port_text = os.getenv("GRADIO_SERVER_PORT", "").strip()
+    if port_text:
+        return int(port_text)
+    return _find_free_port()
 
 
 def _build_trace_rows(agent: ReActAgent) -> list[list[str]]:
@@ -89,9 +122,22 @@ def run_agent(question: str, max_steps: int):
     if not question:
         return "请输入一个任务。", [], "<p>暂无执行步骤。</p>", "未运行"
 
+    if not _has_api_key():
+        return _error_result(
+            "还没有配置 DeepSeek API Key。\n\n"
+            "请复制 .env.example 为 .env，然后把 DEEPSEEK_API_KEY 改成你的真实 key。"
+        )
+
     started_at = time.time()
-    agent = ReActAgent(verbose=False)
-    answer = agent.run(question, max_steps=max_steps)
+    try:
+        agent = ReActAgent(verbose=False)
+        answer = agent.run(question, max_steps=max_steps)
+    except Exception as exc:
+        return _error_result(
+            "Agent 运行失败。\n\n"
+            f"错误信息：{exc}\n\n"
+            "请检查 .env 配置、网络连接，以及当前项目依赖是否安装完整。"
+        )
     total_ms = (time.time() - started_at) * 1000
 
     success_count = sum(1 for trace in agent.traces if trace.success)
@@ -190,4 +236,6 @@ with gr.Blocks(title="Mini Coding Agent") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(server_name="127.0.0.1", server_port=7860, css=CUSTOM_CSS)
+    port = _get_server_port()
+    print(f"Mini Coding Agent web UI: http://127.0.0.1:{port}")
+    demo.launch(server_name="127.0.0.1", server_port=port, css=CUSTOM_CSS)
