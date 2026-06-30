@@ -4,6 +4,10 @@
 
 当前项目使用 Python + DeepSeek API 实现 ReAct 循环，不依赖 LangChain、AutoGPT、CrewAI 等 Agent 框架。项目目标不是训练大模型，而是手写一个能让大模型调用工具、观察结果、继续推理的 Agent Runtime。
 
+## 演示预览
+
+![Mini Coding Agent 网页端演示](assets/demo.gif)
+
 ## 项目目标
 
 这个项目用于学习和展示 AI Agent 的底层结构：
